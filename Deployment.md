@@ -42,7 +42,7 @@ npm install -g @anthropic-ai/claude-code
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/claude-cli-wrapper.git
+git clone https://github.com/rpakishore/claude-cli-wrapper.git
 cd claude-cli-wrapper
 
 # Create virtual environment with uv
