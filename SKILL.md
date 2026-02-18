@@ -218,6 +218,14 @@ print(person.name)        # "Jane"
 
 When `response_model` is provided, the wrapper automatically sets `output_format="json"` and generates the JSON schema from the model. You do not need to set `json_schema` separately.
 
+### JSON schema limitations
+
+Schemas passed to `json_schema` (or generated from `response_model`) must follow [Anthropic's structured output constraints](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations).
+
+**Supported:** basic types (object, array, string, integer, number, boolean, null), `enum` (primitives only), `const`, `anyOf`/`allOf`, `$ref`/`$def`/`definitions` (no external `$ref`), `default`, `required`, `additionalProperties: false` (required on all objects), string formats (`date-time`, `time`, `date`, `duration`, `email`, `hostname`, `uri`, `ipv4`, `ipv6`, `uuid`), `minItems` (0 or 1 only).
+
+**Not supported:** recursive schemas, complex types in enums, external `$ref`, numerical constraints (`minimum`, `maximum`, `multipleOf`), string constraints (`minLength`, `maxLength`), array constraints beyond `minItems` 0/1, `additionalProperties` set to anything other than `false`.
+
 ## Tool Control
 
 ```python
