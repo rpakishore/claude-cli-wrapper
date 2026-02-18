@@ -1,18 +1,20 @@
 """Unit tests for the main client."""
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_cli_wrapper.core.client import run
+from claude_cli_wrapper.core.client import _extract_from_envelope, run
 from claude_cli_wrapper.errors import (
     AuthenticationError,
     CLINotFoundError,
     ExecutionError,
     TimeoutError,
 )
+from tests.fixtures.mock_responses import create_cli_json_envelope
 
 
 def mock_subprocess_result(
@@ -210,6 +212,130 @@ class TestRunErrors:
         assert "Some error" in exc_info.value.stderr
 
 
+class TestRunWithJsonOutput:
+    """Tests for run() with JSON output format and envelope extraction."""
+
+    @patch("claude_cli_wrapper.core.client.resolve_cli_path")
+    @patch("claude_cli_wrapper.core.client.subprocess.run")
+    def test_extracts_result_from_envelope(self, mock_run, mock_resolve) -> None:
+        """run() should extract result text from CLI JSON envelope."""
+        mock_resolve.return_value = "claude"
+        envelope = create_cli_json_envelope(result="Hello from Claude")
+        mock_run.return_value = mock_subprocess_result(stdout=envelope)
+
+        response = run("Test", output_format="json")
+
+        assert response.text == "Hello from Claude"
+
+    @patch("claude_cli_wrapper.core.client.resolve_cli_path")
+    @patch("claude_cli_wrapper.core.client.subprocess.run")
+    def test_stores_envelope_metadata(self, mock_run, mock_resolve) -> None:
+        """run() should store CLI envelope metadata on the response."""
+        mock_resolve.return_value = "claude"
+        envelope = create_cli_json_envelope(
+            result="hi",
+            session_id="sess-abc",
+            total_cost_usd=0.05,
+        )
+        mock_run.return_value = mock_subprocess_result(stdout=envelope)
+
+        response = run("Test", output_format="json")
+
+        assert response.metadata is not None
+        assert response.metadata["session_id"] == "sess-abc"
+        assert response.metadata["total_cost_usd"] == 0.05
+
+    @patch("claude_cli_wrapper.core.client.resolve_cli_path")
+    @patch("claude_cli_wrapper.core.client.subprocess.run")
+    def test_missing_result_defaults_to_empty(self, mock_run, mock_resolve) -> None:
+        """run() should default to empty text when envelope has no result."""
+        mock_resolve.return_value = "claude"
+        envelope_data = {"type": "result", "subtype": "success"}
+        mock_run.return_value = mock_subprocess_result(stdout=json.dumps(envelope_data))
+
+        response = run("Test", output_format="json")
+
+        assert response.text == ""
+
+    @patch("claude_cli_wrapper.core.client.resolve_cli_path")
+    @patch("claude_cli_wrapper.core.client.subprocess.run")
+    def test_text_mode_not_affected(self, mock_run, mock_resolve) -> None:
+        """run() should not extract envelope when using text output format."""
+        mock_resolve.return_value = "claude"
+        # Even if stdout looks like JSON, text mode should pass it through
+        raw = '{"type": "result", "result": "inner"}'
+        mock_run.return_value = mock_subprocess_result(stdout=raw)
+
+        response = run("Test")  # default output_format (text)
+
+        assert response.text == raw
+        assert response._cli_envelope is None
+
+    @patch("claude_cli_wrapper.core.client.resolve_cli_path")
+    @patch("claude_cli_wrapper.core.client.subprocess.run")
+    def test_auto_json_format_with_json_schema(self, mock_run, mock_resolve) -> None:
+        """run() should auto-set output_format='json' when json_schema is provided."""
+        mock_resolve.return_value = "claude"
+        envelope = create_cli_json_envelope(
+            result='{"name": "Alice"}',
+            structured_output={"name": "Alice"},
+        )
+        mock_run.return_value = mock_subprocess_result(stdout=envelope)
+
+        response = run(
+            "Extract name",
+            json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
+        )
+
+        # Should have extracted from envelope (auto-json triggered)
+        assert response.text == '{"name": "Alice"}'
+        assert response._cli_envelope is not None
+        # Should have used --output-format json in the command
+        cmd = mock_run.call_args.args[0]
+        assert "--output-format" in cmd
+        idx = cmd.index("--output-format")
+        assert cmd[idx + 1] == "json"
+
+
+class TestExtractFromEnvelope:
+    """Tests for _extract_from_envelope() helper."""
+
+    def test_extracts_result_from_valid_envelope(self) -> None:
+        """Should extract result text from a valid CLI envelope."""
+        envelope = create_cli_json_envelope(result="Hello")
+        text, data = _extract_from_envelope(envelope)
+        assert text == "Hello"
+        assert data is not None
+        assert data["type"] == "result"
+
+    def test_returns_raw_for_non_json(self) -> None:
+        """Should return raw stdout when it's not valid JSON."""
+        text, data = _extract_from_envelope("plain text response")
+        assert text == "plain text response"
+        assert data is None
+
+    def test_returns_raw_for_json_without_type(self) -> None:
+        """Should return raw stdout when JSON has no 'type' key."""
+        raw = json.dumps({"name": "Alice", "age": 30})
+        text, data = _extract_from_envelope(raw)
+        assert text == raw
+        assert data is None
+
+    def test_missing_result_defaults_to_empty(self) -> None:
+        """Should default to empty string when result is missing."""
+        raw = json.dumps({"type": "result", "subtype": "success"})
+        text, data = _extract_from_envelope(raw)
+        assert text == ""
+        assert data is not None
+
+    def test_null_result_defaults_to_empty(self) -> None:
+        """Should default to empty string when result is None."""
+        raw = json.dumps({"type": "result", "result": None})
+        text, data = _extract_from_envelope(raw)
+        assert text == ""
+        assert data is not None
+
+
 class TestRunWithResponseModel:
     """Tests for run() with response_model parameter."""
 
@@ -224,7 +350,11 @@ class TestRunWithResponseModel:
             name: str
 
         mock_resolve.return_value = "claude"
-        mock_run.return_value = mock_subprocess_result(stdout='{"name": "John"}')
+        envelope = create_cli_json_envelope(
+            result='{"name": "John"}',
+            structured_output={"name": "John"},
+        )
+        mock_run.return_value = mock_subprocess_result(stdout=envelope)
 
         run("Extract name", response_model=Person)
 
@@ -244,7 +374,11 @@ class TestRunWithResponseModel:
             value: int
 
         mock_resolve.return_value = "claude"
-        mock_run.return_value = mock_subprocess_result(stdout='{"value": 42}')
+        envelope = create_cli_json_envelope(
+            result='{"value": 42}',
+            structured_output={"value": 42},
+        )
+        mock_run.return_value = mock_subprocess_result(stdout=envelope)
 
         run("Extract value", response_model=Item)
 

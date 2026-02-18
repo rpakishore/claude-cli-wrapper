@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -24,6 +25,35 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_from_envelope(raw_stdout: str) -> tuple[str, dict | None]:
+    """Extract the model's response from the CLI JSON envelope.
+
+    When ``--output-format json`` is used, the CLI wraps responses in a
+    metadata envelope like ``{"type":"result","result":"...","duration_ms":...}``.
+    This helper extracts the ``result`` field as the response text and returns
+    the full envelope for metadata access.
+
+    Args:
+        raw_stdout: The raw stdout from the CLI subprocess.
+
+    Returns:
+        A tuple of ``(result_text, envelope_dict)``.  If the stdout is not
+        a CLI envelope, returns ``(raw_stdout, None)`` unchanged.
+    """
+    try:
+        data = json.loads(raw_stdout)
+    except (json.JSONDecodeError, TypeError):
+        return raw_stdout, None
+
+    if isinstance(data, dict) and "type" in data:
+        result_text = data.get("result", "")
+        if result_text is None:
+            result_text = ""
+        return str(result_text), data
+
+    return raw_stdout, None
 
 
 def run(
@@ -153,6 +183,10 @@ def run(
                     value=str(response_model),
                 ) from e
 
+    # Auto-set JSON output format when json_schema is provided
+    if effective_json_schema is not None and effective_output_format is None:
+        effective_output_format = "json"
+
     # Build command
     command = build_command(
         resolved_cli_path,
@@ -240,9 +274,17 @@ def run(
             command=command,
         )
 
+    # Extract response from CLI JSON envelope when applicable
+    response_text = result.stdout
+    cli_envelope = None
+    if effective_output_format == "json":
+        response_text, cli_envelope = _extract_from_envelope(result.stdout)
+        if cli_envelope is not None:
+            logger.debug("Extracted response from CLI JSON envelope")
+
     # Build response
     return ClaudeResponse(
-        text=result.stdout,
+        text=response_text,
         exit_code=result.returncode,
         stderr=result.stderr,
         command=command,
@@ -250,4 +292,5 @@ def run(
         duration=duration,
         _json_schema=effective_json_schema,
         _response_model=response_model,
+        _cli_envelope=cli_envelope,
     )

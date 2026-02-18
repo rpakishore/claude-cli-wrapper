@@ -148,7 +148,8 @@ Returned by `run()` and `Session.run()`. Supports `str(response)` which returns 
 | `command` | `list[str]` | The full command that was executed |
 | `working_dir` | `str` | Working directory used for execution |
 | `duration` | `float` | Execution time in seconds |
-| `json` | `dict \| None` | Property. Parsed JSON; returns `None` unless `json_schema` or `response_model` was provided. Raises `ValueError` on invalid JSON. |
+| `metadata` | `dict \| None` | Property. CLI envelope metadata (`session_id`, `total_cost_usd`, `usage`, `num_turns`, `duration_ms`, etc.). Returns `None` unless `output_format="json"` was used. |
+| `json` | `dict \| None` | Property. Parsed JSON; returns `None` unless `json_schema` or `response_model` was provided. Prefers `structured_output` from CLI envelope when available. Raises `ValueError` on invalid JSON. |
 | `parsed` | `Any \| None` | Property. Validated Pydantic model instance; returns `None` unless `response_model` was provided. Raises `ImportError` if pydantic is not installed, `ValueError` on validation failure. |
 
 ## Sessions

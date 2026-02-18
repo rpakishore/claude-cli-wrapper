@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+
+_METADATA_KEYS = (
+    "session_id",
+    "total_cost_usd",
+    "usage",
+    "num_turns",
+    "duration_ms",
+    "duration_api_ms",
+    "is_error",
+    "stop_reason",
+    "subtype",
+)
 
 
 @dataclass
@@ -24,6 +38,8 @@ class ClaudeResponse:
         command: The full command that was executed.
         working_dir: The working directory used for execution.
         duration: Execution time in seconds.
+        metadata: CLI envelope metadata (session_id, cost, usage, etc.)
+            when ``output_format="json"`` was used.  ``None`` otherwise.
 
     Example:
         >>> response = run("Hello")
@@ -39,6 +55,7 @@ class ClaudeResponse:
     duration: float
     _json_schema: dict | None = field(default=None, repr=False)
     _response_model: type | None = field(default=None, repr=False)
+    _cli_envelope: dict | None = field(default=None, repr=False)
     _parsed_json: dict | None = field(default=None, repr=False, init=False)
     _parsed_model: Any = field(default=None, repr=False, init=False)
 
@@ -51,6 +68,26 @@ class ClaudeResponse:
             The response text.
         """
         return self.text
+
+    @property
+    def metadata(self) -> dict | None:
+        """Return CLI envelope metadata when available.
+
+        When ``output_format="json"`` is used, the CLI wraps the model's
+        response in a metadata envelope containing session information,
+        cost, usage statistics, etc.  This property returns the useful
+        subset of those fields.
+
+        Returns:
+            A dict with keys like ``session_id``, ``total_cost_usd``,
+            ``usage``, ``num_turns``, ``duration_ms``, ``is_error``, etc.
+            Returns ``None`` if no envelope was captured.
+        """
+        if self._cli_envelope is None:
+            return None
+        return {
+            k: self._cli_envelope[k] for k in _METADATA_KEYS if k in self._cli_envelope
+        }
 
     @property
     def json(self) -> dict | None:
@@ -69,13 +106,26 @@ class ClaudeResponse:
             return None
 
         if self._parsed_json is None:
-            try:
-                self._parsed_json = json.loads(self.text)
-            except json.JSONDecodeError as e:
-                raise ValueError(
-                    f"Failed to parse response as JSON: {e}. "
-                    f"Response text: {self.text[:200]}..."
-                ) from e
+            # Prefer structured_output from CLI envelope when available
+            if (
+                self._cli_envelope is not None
+                and "structured_output" in self._cli_envelope
+            ):
+                so = self._cli_envelope["structured_output"]
+                if isinstance(so, dict):
+                    self._parsed_json = so
+                elif isinstance(so, str):
+                    with contextlib.suppress(json.JSONDecodeError):
+                        self._parsed_json = json.loads(so)
+
+            if self._parsed_json is None:
+                try:
+                    self._parsed_json = json.loads(self.text)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Failed to parse response as JSON: {e}. "
+                        f"Response text: {self.text[:200]}..."
+                    ) from e
 
         return self._parsed_json
 

@@ -157,6 +157,7 @@ print(response.stderr)      # Any stderr output
 print(response.command)     # The full command that was executed
 print(response.working_dir) # Working directory used
 print(response.duration)    # Execution time in seconds
+print(response.metadata)    # CLI metadata (when output_format="json")
 ```
 
 ## Structured Output (JSON Schema)
@@ -199,6 +200,23 @@ response = run(
 person = response.parsed
 print(person.name)  # "Jane"
 print(person.age)   # 25
+```
+
+### Response Metadata
+
+When using JSON output, the CLI returns metadata alongside the response:
+
+```python
+response = run(
+    "Extract name from: 'Alice is 30'",
+    json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
+)
+
+if response.metadata:
+    print(response.metadata["session_id"])      # Session identifier
+    print(response.metadata["total_cost_usd"])  # Cost in USD
+    print(response.metadata["num_turns"])        # Agentic turns used
+    print(response.metadata["duration_ms"])      # CLI duration in ms
 ```
 
 ## Tool Control
@@ -471,6 +489,7 @@ Response object returned by `run()` and `Session.run()`.
 | `command` | `list[str]` | The full command that was executed |
 | `working_dir` | `str` | The working directory used |
 | `duration` | `float` | Execution time in seconds |
+| `metadata` | `dict \| None` | CLI envelope metadata (session_id, cost, usage, etc.) when `output_format="json"` |
 | `json` | `dict \| None` | Parsed JSON (when json_schema was provided) |
 | `parsed` | `Any \| None` | Pydantic model instance (when response_model was provided) |
 

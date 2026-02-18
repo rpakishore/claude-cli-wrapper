@@ -165,3 +165,104 @@ class TestClaudeResponseParsed:
         )
         with pytest.raises(ValueError, match="Failed to validate response"):
             _ = response.parsed
+
+
+class TestClaudeResponseMetadata:
+    """Tests for ClaudeResponse.metadata property."""
+
+    def test_metadata_returns_none_without_envelope(self) -> None:
+        """metadata should return None when no envelope is present."""
+        response = make_response()
+        assert response.metadata is None
+
+    def test_metadata_returns_filtered_fields(self) -> None:
+        """metadata should return only the expected envelope fields."""
+        envelope = {
+            "type": "result",
+            "subtype": "success",
+            "result": "hello",
+            "session_id": "sess-123",
+            "total_cost_usd": 0.05,
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+            "num_turns": 2,
+            "duration_ms": 1500,
+            "duration_api_ms": 1200,
+            "is_error": False,
+            "stop_reason": "end_turn",
+        }
+        response = make_response(_cli_envelope=envelope)
+        meta = response.metadata
+
+        assert meta is not None
+        assert meta["session_id"] == "sess-123"
+        assert meta["total_cost_usd"] == 0.05
+        assert meta["num_turns"] == 2
+        assert meta["is_error"] is False
+        assert meta["stop_reason"] == "end_turn"
+        # "type" and "result" should NOT appear in metadata
+        assert "type" not in meta
+        assert "result" not in meta
+
+    def test_metadata_handles_partial_envelope(self) -> None:
+        """metadata should handle envelopes with only some fields."""
+        envelope = {"type": "result", "session_id": "sess-456"}
+        response = make_response(_cli_envelope=envelope)
+        meta = response.metadata
+
+        assert meta is not None
+        assert meta == {"session_id": "sess-456"}
+
+
+class TestClaudeResponseJsonWithEnvelope:
+    """Tests for ClaudeResponse.json property with CLI envelope."""
+
+    def test_json_prefers_structured_output_dict(self) -> None:
+        """json should prefer structured_output from envelope when it's a dict."""
+        envelope = {
+            "type": "result",
+            "result": '{"name": "Alice"}',
+            "structured_output": {"name": "Alice", "extra": True},
+        }
+        response = make_response(
+            text='{"name": "Alice"}',
+            _json_schema={"type": "object"},
+            _cli_envelope=envelope,
+        )
+        assert response.json == {"name": "Alice", "extra": True}
+
+    def test_json_prefers_structured_output_string(self) -> None:
+        """json should parse structured_output when it's a JSON string."""
+        envelope = {
+            "type": "result",
+            "result": "ignored",
+            "structured_output": '{"value": 42}',
+        }
+        response = make_response(
+            text="ignored",
+            _json_schema={"type": "object"},
+            _cli_envelope=envelope,
+        )
+        assert response.json == {"value": 42}
+
+    def test_json_falls_back_to_text_without_structured_output(self) -> None:
+        """json should fall back to parsing text when no structured_output."""
+        envelope = {"type": "result", "result": '{"greeting": "hi"}'}
+        response = make_response(
+            text='{"greeting": "hi"}',
+            _json_schema={"type": "object"},
+            _cli_envelope=envelope,
+        )
+        assert response.json == {"greeting": "hi"}
+
+    def test_json_falls_back_when_structured_output_invalid(self) -> None:
+        """json should fall back to text when structured_output is invalid JSON."""
+        envelope = {
+            "type": "result",
+            "structured_output": "not valid json {{",
+        }
+        response = make_response(
+            text='{"fallback": true}',
+            _json_schema={"type": "object"},
+            _cli_envelope=envelope,
+        )
+        assert response.json == {"fallback": True}
